@@ -2,8 +2,7 @@ import streamlit as st
 import pandas as pd
 import os
 from datetime import date
-import matplotlib.pyplot as plt
-import matplotlib.font_manager as fm
+import altair as alt
 
 st.set_page_config(page_title="DueMate+", layout="wide")
 
@@ -12,24 +11,6 @@ EXTERNAL_FILE = "data/external_deadlines.csv"
 
 st.title("📚 DueMate+")
 st.subheader("대학생 과제 및 대외활동 통합 마감 관리 웹앱")
-
-
-def set_korean_font():
-    try:
-        import koreanize_matplotlib
-    except:
-        font_candidates = ["Malgun Gothic", "AppleGothic", "NanumGothic", "Noto Sans CJK KR"]
-        available_fonts = [f.name for f in fm.fontManager.ttflist]
-
-        for font in font_candidates:
-            if font in available_fonts:
-                plt.rcParams["font.family"] = font
-                break
-
-    plt.rcParams["axes.unicode_minus"] = False
-
-
-set_korean_font()
 
 
 def load_tasks():
@@ -52,7 +33,12 @@ def load_tasks():
 
         df = df[columns]
 
-        for col in ["task_name", "subject", "importance", "status", "memo", "type", "created_date", "completed_date"]:
+        text_cols = [
+            "task_name", "subject", "importance", "status",
+            "memo", "type", "created_date", "completed_date"
+        ]
+
+        for col in text_cols:
             df[col] = df[col].fillna("").astype(str)
 
         return df
@@ -62,7 +48,13 @@ def load_tasks():
 
 def save_tasks(df):
     df = df.copy()
-    for col in ["task_name", "subject", "importance", "status", "memo", "type", "created_date", "completed_date"]:
+
+    text_cols = [
+        "task_name", "subject", "importance", "status",
+        "memo", "type", "created_date", "completed_date"
+    ]
+
+    for col in text_cols:
         if col in df.columns:
             df[col] = df[col].fillna("").astype(str)
 
@@ -75,63 +67,6 @@ def add_d_day(df, deadline_col="deadline"):
     today = pd.Timestamp.today().normalize()
     df["d_day"] = (df[deadline_col] - today).dt.days
     return df
-
-
-def draw_pie_chart(series, title):
-    fig, ax = plt.subplots(figsize=(7, 7))
-    ax.pie(series.values, labels=series.index, autopct="%1.1f%%", startangle=90)
-    ax.set_title(title, fontsize=15, pad=15)
-    ax.axis("equal")
-    st.pyplot(fig)
-
-
-def draw_histogram(data, title, xlabel, ylabel):
-    fig, ax = plt.subplots(figsize=(9, 5))
-    ax.hist(data.dropna(), bins=8, edgecolor="black")
-    ax.set_title(title, fontsize=15, pad=15)
-    ax.set_xlabel(xlabel)
-    ax.set_ylabel(ylabel)
-    ax.grid(axis="y", linestyle="--", alpha=0.4)
-    plt.tight_layout()
-    st.pyplot(fig)
-
-
-def draw_timeline(df):
-    fig, ax = plt.subplots(figsize=(12, 5))
-
-    df = df.copy()
-    df["deadline"] = pd.to_datetime(df["deadline"], errors="coerce")
-    df = df.dropna(subset=["deadline"])
-
-    today = pd.Timestamp.today().normalize()
-    end_day = today + pd.Timedelta(days=60)
-
-    df = df[
-        (df["deadline"] >= today) &
-        (df["deadline"] <= end_day)
-    ].sort_values("deadline")
-
-    if len(df) == 0:
-        st.info("앞으로 2개월 안에 마감되는 과제가 없습니다.")
-        return
-
-    ax.scatter(df["deadline"], range(len(df)), s=90)
-
-    for i, row in enumerate(df.itertuples()):
-        ax.text(row.deadline, i, f" {row.task_name}", va="center", fontsize=9)
-
-    ax.set_xlim(today, end_day)
-    ax.set_title("앞으로 2개월 내 과제 마감일 타임라인", fontsize=15, pad=15)
-    ax.set_xlabel("마감일")
-    ax.set_yticks([])
-    ax.grid(axis="x", linestyle="--", alpha=0.4)
-
-    date_ticks = pd.date_range(today, end_day, freq="7D")
-    ax.set_xticks(date_ticks)
-    ax.set_xticklabels([d.strftime("%m-%d") for d in date_ticks], rotation=45)
-
-    plt.tight_layout()
-    st.pyplot(fig)
 
 
 tasks = load_tasks()
@@ -149,26 +84,33 @@ if menu == "홈":
 
     tasks = add_d_day(tasks) if len(tasks) > 0 else tasks
 
-    st.caption("마감 임박 기준: 내 일정은 D-3 이내, 외부 일정은 D-7 이내로 표시합니다.")
+    st.caption("마감 임박 기준: 내 일정은 D-3 이내로 표시합니다. 완료된 일정은 홈 화면에서 제외됩니다.")
+
+    if len(tasks) > 0:
+        active_tasks = tasks[tasks["status"].astype(str).str.strip() != "완료"].copy()
+    else:
+        active_tasks = tasks.copy()
 
     col1, col2, col3, col4 = st.columns(4)
 
     total_tasks = len(tasks)
-    completed_tasks = len(tasks[tasks["status"] == "완료"]) if len(tasks) > 0 else 0
-    urgent_tasks_count = len(tasks[(tasks["d_day"] >= 0) & (tasks["d_day"] <= 3)]) if len(tasks) > 0 else 0
-    external_count = len(external)
+    active_count = len(active_tasks)
+    completed_tasks = len(tasks[tasks["status"].astype(str).str.strip() == "완료"]) if len(tasks) > 0 else 0
+    urgent_tasks_count = len(
+        active_tasks[(active_tasks["d_day"] >= 0) & (active_tasks["d_day"] <= 3)]
+    ) if len(active_tasks) > 0 else 0
 
     col1.metric("전체 일정 수", total_tasks)
-    col2.metric("완료 일정 수", completed_tasks)
-    col3.metric("마감 임박 일정", urgent_tasks_count)
-    col4.metric("수집된 외부 일정 수", external_count)
+    col2.metric("진행 중 일정 수", active_count)
+    col3.metric("완료 일정 수", completed_tasks)
+    col4.metric("마감 임박 일정", urgent_tasks_count)
 
     st.divider()
 
     st.subheader("📅 내 통합 일정표")
 
-    if len(tasks) > 0:
-        task_calendar = tasks.copy().sort_values("deadline")
+    if len(active_tasks) > 0:
+        task_calendar = active_tasks.copy().sort_values("deadline")
 
         st.dataframe(
             task_calendar[
@@ -180,14 +122,14 @@ if menu == "홈":
             use_container_width=True
         )
     else:
-        st.info("아직 등록된 일정이 없습니다.")
+        st.info("현재 진행 중인 일정이 없습니다.")
 
     st.divider()
 
     st.subheader("🗓️ 날짜별 캘린더")
 
-    if len(tasks) > 0:
-        calendar_data = tasks.copy()
+    if len(active_tasks) > 0:
+        calendar_data = active_tasks.copy()
         calendar_data["deadline"] = pd.to_datetime(calendar_data["deadline"], errors="coerce")
         calendar_data = calendar_data.sort_values("deadline")
 
@@ -203,14 +145,16 @@ if menu == "홈":
                     f"{icon} **{row['task_name']}** / {row['type']} / {row['status']} / D-{row['d_day']}"
                 )
     else:
-        st.info("캘린더에 표시할 일정이 없습니다.")
+        st.info("캘린더에 표시할 진행 중 일정이 없습니다.")
 
     st.divider()
 
     st.subheader("🚨 마감 임박 내 일정 (D-3)")
 
-    if len(tasks) > 0:
-        urgent_tasks = tasks[(tasks["d_day"] >= 0) & (tasks["d_day"] <= 3)].sort_values("d_day")
+    if len(active_tasks) > 0:
+        urgent_tasks = active_tasks[
+            (active_tasks["d_day"] >= 0) & (active_tasks["d_day"] <= 3)
+        ].sort_values("d_day")
 
         if len(urgent_tasks) > 0:
             st.dataframe(
@@ -222,7 +166,7 @@ if menu == "홈":
         else:
             st.success("D-3 이내 마감 일정이 없습니다.")
     else:
-        st.info("아직 등록된 일정이 없습니다.")
+        st.info("현재 진행 중인 일정이 없습니다.")
 
 
 elif menu == "과제 등록":
@@ -449,7 +393,8 @@ elif menu == "추천":
         urgent_count = len(
             tasks_recommend[
                 (tasks_recommend["d_day"] >= 0) &
-                (tasks_recommend["d_day"] <= 7)
+                (tasks_recommend["d_day"] <= 7) &
+                (tasks_recommend["status"] != "완료")
             ]
         )
 
@@ -478,21 +423,16 @@ elif menu == "추천":
 
     st.subheader("추천 기준")
     st.write("""
-    - 내 일정 중 D-7 이내 마감 일정이 3개 미만이면 비교적 여유가 있다고 판단합니다.
+    - 완료되지 않은 내 일정 중 D-7 이내 마감 일정이 3개 미만이면 비교적 여유가 있다고 판단합니다.
     - 접수중인 외부 일정만 추천합니다.
     - 준비 기간을 확보하기 위해 D-30 이상 남은 일정을 우선 추천합니다.
     """)
 
 
 elif menu == "통계":
-    st.header("📊 내 과제 수행 습관 분석")
+    st.header("📊 과제 수행 기간 분석")
 
     tasks_analysis = add_d_day(tasks) if len(tasks) > 0 else tasks.copy()
-
-    st.write("""
-    이 페이지에서는 사용자가 등록한 과제 데이터를 바탕으로
-    과제 진행 상태, 과목별 과제 수, 과제 등록 시점, 과제 완료 시점을 분석합니다.
-    """)
 
     if len(tasks_analysis) == 0:
         st.info("아직 등록된 일정이 없습니다. 과제를 등록하면 통계가 표시됩니다.")
@@ -500,138 +440,97 @@ elif menu == "통계":
     else:
         only_tasks = tasks_analysis[tasks_analysis["type"] == "과제"].copy()
 
-        col1, col2, col3 = st.columns(3)
-        col1.metric("등록된 과제 수", len(only_tasks))
-        col2.metric("완료 과제 수", len(only_tasks[only_tasks["status"] == "완료"]))
-        col3.metric("진행 중 과제 수", len(only_tasks[only_tasks["status"] == "진행 중"]))
+        if len(only_tasks) == 0:
+            st.info("등록된 과제가 없습니다.")
 
-        st.divider()
-
-        st.subheader("1️⃣ 과제 상태 비율")
-
-        status_count = only_tasks["status"].value_counts()
-
-        if len(status_count) > 0:
-            draw_pie_chart(status_count, "과제 상태 비율")
-            st.write("현재 등록된 과제들이 시작 전, 진행 중, 완료 상태에 어떻게 분포하는지 보여줍니다.")
-            st.dataframe(status_count)
         else:
-            st.info("과제 데이터가 없습니다.")
+            only_tasks["deadline"] = pd.to_datetime(only_tasks["deadline"], errors="coerce")
+            only_tasks["created_date"] = pd.to_datetime(only_tasks["created_date"], errors="coerce")
 
-        st.divider()
-
-        st.subheader("2️⃣ 과목별 과제 비율")
-
-        subject_count = only_tasks["subject"].value_counts()
-
-        if len(subject_count) > 0:
-            draw_pie_chart(subject_count, "과목별 과제 비율")
-            st.write("어떤 과목에 과제가 많이 몰려 있는지 확인할 수 있습니다.")
-            st.dataframe(subject_count)
-        else:
-            st.info("과목 정보가 있는 과제가 없습니다.")
-
-        st.divider()
-
-        st.subheader("3️⃣ 내 일정 마감일 타임라인")
-
-        if len(only_tasks) > 0:
-            draw_timeline(only_tasks)
-            st.write("앞으로 2개월 안에 등록한 과제들이 어느 날짜에 몰려 있는지 확인할 수 있습니다.")
-        else:
-            st.info("타임라인을 그릴 과제가 없습니다.")
-
-        st.divider()
-
-        st.subheader("4️⃣ 과제 등록 시점 분석")
-
-        only_tasks["deadline"] = pd.to_datetime(only_tasks["deadline"], errors="coerce")
-        only_tasks["created_date"] = pd.to_datetime(only_tasks["created_date"], errors="coerce")
-
-        only_tasks["days_registered_before_deadline"] = (
-            only_tasks["deadline"] - only_tasks["created_date"]
-        ).dt.days
-
-        registered_data = only_tasks["days_registered_before_deadline"].dropna()
-
-        if len(registered_data) > 0:
-            avg_registered = registered_data.mean()
-
-            st.metric("평균 과제 등록 시점", f"마감 {avg_registered:.1f}일 전")
-
-            draw_histogram(
-                registered_data,
-                "과제를 마감 며칠 전에 등록했는가",
-                "마감 전 등록 일수",
-                "과제 수"
-            )
-
-            st.write("이 그래프는 사용자가 과제를 얼마나 여유 있게 등록하는지 보여줍니다.")
-        else:
-            st.info("등록 시점 분석에 사용할 데이터가 없습니다.")
-
-        st.divider()
-
-        st.subheader("5️⃣ 과제 완료 시점 분석")
-
-        completed_tasks_df = only_tasks[
-            (only_tasks["status"] == "완료") &
-            (only_tasks["completed_date"].notna()) &
-            (only_tasks["completed_date"] != "")
-        ].copy()
-
-        if len(completed_tasks_df) > 0:
-            completed_tasks_df["completed_date"] = pd.to_datetime(
-                completed_tasks_df["completed_date"],
-                errors="coerce"
-            )
-
-            completed_tasks_df["days_completed_before_deadline"] = (
-                completed_tasks_df["deadline"] - completed_tasks_df["completed_date"]
+            only_tasks["deadline_minus_created"] = (
+                only_tasks["deadline"] - only_tasks["created_date"]
             ).dt.days
 
-            completed_data = completed_tasks_df["days_completed_before_deadline"].dropna()
+            only_tasks = only_tasks.dropna(subset=["deadline_minus_created"])
 
-            avg_completed = completed_data.mean()
+            col1, col2, col3 = st.columns(3)
 
-            st.metric("평균 과제 완료 시점", f"마감 {avg_completed:.1f}일 전")
+            col1.metric("등록된 과제 수", len(only_tasks))
+            col2.metric("평균 확보 기간", f"{only_tasks['deadline_minus_created'].mean():.1f}일")
+            col3.metric("가장 긴 확보 기간", f"{only_tasks['deadline_minus_created'].max():.0f}일")
 
-            draw_histogram(
-                completed_data,
-                "과제를 마감 며칠 전에 완료했는가",
-                "마감 전 완료 일수",
-                "과제 수"
+            st.write("""
+            이 그래프는 과제를 등록한 날부터 마감일까지 며칠의 여유가 있었는지를 보여줍니다.
+            값이 클수록 사용자가 더 일찍 과제를 등록했다는 뜻입니다.
+            """)
+
+            chart_data = only_tasks[
+                ["task_name", "subject", "deadline", "created_date", "deadline_minus_created", "status"]
+            ].copy()
+
+            chart_data["deadline_minus_created"] = chart_data["deadline_minus_created"].astype(float)
+
+            chart = (
+                alt.Chart(chart_data)
+                .mark_circle(size=180)
+                .encode(
+                    x=alt.X(
+                        "deadline_minus_created:Q",
+                        title="과제 등록일부터 마감일까지 남은 일수"
+                    ),
+                    y=alt.Y(
+                        "task_name:N",
+                        title="과제명",
+                        sort="-x"
+                    ),
+                    color=alt.Color(
+                        "status:N",
+                        title="진행 상태"
+                    ),
+                    tooltip=[
+                        alt.Tooltip("task_name:N", title="과제명"),
+                        alt.Tooltip("subject:N", title="과목"),
+                        alt.Tooltip("status:N", title="상태"),
+                        alt.Tooltip("created_date:T", title="등록일"),
+                        alt.Tooltip("deadline:T", title="마감일"),
+                        alt.Tooltip("deadline_minus_created:Q", title="확보 기간")
+                    ]
+                )
+                .properties(
+                    width=800,
+                    height=max(300, len(chart_data) * 45),
+                    title="과제별 등록일-마감일 확보 기간"
+                )
             )
 
-            st.write("이 그래프는 사용자가 과제를 마감 전에 얼마나 여유 있게 완료하는지 보여줍니다.")
+            rule = (
+                alt.Chart(chart_data)
+                .mark_rule(strokeDash=[4, 4])
+                .encode(
+                    x="mean(deadline_minus_created):Q"
+                )
+            )
 
-            st.write("완료 과제 상세 데이터")
+            st.altair_chart(chart + rule, use_container_width=True)
+
+            st.subheader("분석 결과 요약")
+
+            avg_days = only_tasks["deadline_minus_created"].mean()
+            min_task = only_tasks.loc[only_tasks["deadline_minus_created"].idxmin()]
+            max_task = only_tasks.loc[only_tasks["deadline_minus_created"].idxmax()]
+
+            st.markdown(f"""
+            - 평균적으로 과제는 마감 **{avg_days:.1f}일 전** 등록되었습니다.
+            - 가장 여유 있게 등록한 과제는 **{max_task['task_name']}**입니다.
+            - 가장 늦게 등록한 과제는 **{min_task['task_name']}**입니다.
+            - 이 분석을 통해 사용자는 자신이 과제를 얼마나 미리 관리하는지 확인할 수 있습니다.
+            """)
+
+            st.subheader("상세 데이터")
             st.dataframe(
-                completed_tasks_df[
-                    [
-                        "task_name", "subject", "deadline", "created_date",
-                        "completed_date", "days_completed_before_deadline"
-                    ]
-                ],
+                chart_data.sort_values("deadline_minus_created", ascending=False),
                 use_container_width=True
             )
-        else:
-            st.info("완료된 과제가 아직 없습니다. 과제 상태를 '완료'로 변경하면 완료 시점 분석이 표시됩니다.")
-
-        st.divider()
-
-        st.subheader("📌 분석 결과 요약")
-
-        most_status = status_count.index[0] if len(status_count) > 0 else "없음"
-        most_subject = subject_count.index[0] if len(subject_count) > 0 else "없음"
-        avg_registered_text = f"{registered_data.mean():.1f}일 전" if len(registered_data) > 0 else "분석 불가"
-
-        st.markdown(f"""
-        - 현재 가장 많은 과제 상태는 **{most_status}**입니다.
-        - 과제가 가장 많이 등록된 과목은 **{most_subject}**입니다.
-        - 평균적으로 과제는 마감 **{avg_registered_text}** 등록되었습니다.
-        - 완료된 과제가 있는 경우, 마감 며칠 전에 완료하는 경향이 있는지 확인할 수 있습니다.
-        """)
 
 
 elif menu == "데이터 설명":
@@ -654,18 +553,19 @@ elif menu == "데이터 설명":
 
     st.subheader("분석 방법")
     st.write("""
-    수집된 외부 일정 데이터는 pandas를 이용해 정제했습니다. 마감일을 날짜 형식으로 변환하고,
-    현재 날짜를 기준으로 D-day를 계산했습니다.
+    수집된 외부 일정 데이터는 pandas를 이용해 정제했습니다.
+    마감일을 날짜 형식으로 변환하고 현재 날짜를 기준으로 D-day를 계산했습니다.
 
-    또한 사용자가 직접 등록한 과제 데이터에는 등록일과 완료일을 저장하여,
-    과제를 마감 며칠 전에 등록했는지, 마감 며칠 전에 완료했는지를 분석했습니다.
+    사용자가 직접 등록한 과제 데이터에는 등록일과 마감일을 저장했습니다.
+    이를 바탕으로 과제 등록일부터 마감일까지 남은 일수를 계산하여
+    사용자가 과제를 얼마나 미리 관리하는지 분석했습니다.
     """)
 
     st.subheader("분석 결과 설명")
     st.write("""
-    통계 페이지에서는 과제 상태 비율, 과목별 과제 비율, 앞으로 2개월 내 과제 마감일 타임라인,
-    과제 등록 시점, 과제 완료 시점을 확인할 수 있습니다.
-    이를 통해 사용자가 과제를 언제 등록하고, 언제 완료하는지 자신의 수행 습관을 파악할 수 있습니다.
+    통계 페이지에서는 과제별 등록일-마감일 확보 기간을 시각화합니다.
+    이를 통해 사용자는 어떤 과제를 충분히 미리 등록했는지,
+    어떤 과제를 마감에 가깝게 등록했는지 확인할 수 있습니다.
     """)
 
     st.subheader("웹앱 주요 기능")
@@ -674,7 +574,8 @@ elif menu == "데이터 설명":
     - 수집된 외부 일정을 검색, 필터링할 수 있습니다.
     - 관심 있는 외부 일정을 내 일정에 추가하여 과제와 함께 관리할 수 있습니다.
     - 홈 화면의 캘린더에서 과제와 외부활동을 함께 확인할 수 있습니다.
+    - 완료된 일정은 홈 화면에서 제외되어 현재 해야 할 일만 확인할 수 있습니다.
     - 일정 상태를 시작 전, 진행 중, 완료로 변경할 수 있습니다.
     - 현재 일정 여유도에 따라 참여 가능한 외부 일정을 추천합니다.
-    - 완료된 과제를 바탕으로 과제 수행 습관을 분석합니다.
+    - 과제 등록일부터 마감일까지 확보한 기간을 분석합니다.
     """)
